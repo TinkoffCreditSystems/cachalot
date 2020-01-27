@@ -1,15 +1,18 @@
 import { createHash } from 'crypto';
 import isFunction from 'lodash/isFunction';
+import partition from 'lodash/partition';
 import uniq from 'lodash/uniq';
-import { WriteOptions, Storage, StorageRecord, StorageRecordTag, StorageRecordValue } from '../storage';
-import { StorageAdapter } from '../storage-adapter';
-import serialize from '../serialize';
+import { ConnectionStatus } from '../connection-status';
 import deserialize from '../deserialize';
 import createRecord from '../record';
 import createTag from '../record/create-tag';
-import { ConnectionStatus } from '../connection-status';
+import serialize from '../serialize';
+import { Storage, StorageRecord, StorageRecordTag, StorageRecordValue, WriteOptions } from '../storage';
+import { StorageAdapter } from '../storage-adapter';
 
 export const TAGS_VERSIONS_ALIAS = 'cache-tags-versions';
+
+const NON_EXISTING_TAG_VERSION = 0;
 
 export type BaseStorageOptions = {
   adapter: StorageAdapter;
@@ -139,7 +142,7 @@ export class BaseStorage implements Storage {
   public async getTags(tagNames: string[]): Promise<StorageRecordTag[]> {
     return Promise.all(tagNames.map(async tagName => ({
       name: tagName,
-      version: Number(await this.adapter.get(this.createTagKey(tagName))) || 0
+      version: Number(await this.adapter.get(this.createTagKey(tagName))) || NON_EXISTING_TAG_VERSION
     })));
   }
 
@@ -159,7 +162,10 @@ export class BaseStorage implements Storage {
       throw new TypeError(`getTags should return an array of strings, got ${typeof dynamicTags}`);
     }
 
-    const record = createRecord(key, value, uniq(tags.concat(dynamicTags)).map(createTag), options);
+    const allTagNames = uniq(tags.concat(dynamicTags));
+    const allTags = await this.syncTags(allTagNames);
+
+    const record = createRecord(key, value, allTags, options);
 
     await this.adapter.set(
       this.createKey(key),
@@ -239,5 +245,23 @@ export class BaseStorage implements Storage {
     }
 
     return fn(...args);
+  }
+
+  /**
+   * Synchronizes tags in tag storage.
+   * If tag is missing creates it.
+   * All existing tags will be preserved.
+   *
+   * Returns tags according to passed tag names.
+   */
+  private async syncTags(tagNames: string[]): Promise<StorageRecordTag[]> {
+    const allTags = await this.getTags(tagNames);
+
+    const [existingTags, nonExistingTags] = partition(allTags, tag => tag.version !== NON_EXISTING_TAG_VERSION);
+    const createdTags = nonExistingTags.map(tag => createTag(tag.name));
+
+    await this.setTagVersions(createdTags);
+
+    return existingTags.concat(createdTags);
   }
 }

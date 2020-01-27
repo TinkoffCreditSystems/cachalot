@@ -98,6 +98,7 @@ describe('BaseStorage', () => {
     });
     expect(value.tags).toMatchObject([{ name: '123'}]);
     expect(value.expiresIn).toEqual(expect.any(Number));
+    expect(testInterface.internalStorage[`cache-${TAGS_VERSIONS_ALIAS}:123`]).toEqual(expect.any(String));
   });
 
   it('set sets key to storage adapter with uniq array of concatenated dynamic tags and simple tags', async () => {
@@ -112,6 +113,29 @@ describe('BaseStorage', () => {
     });
     expect(value.tags).toMatchObject([{ name: 'tag1'}, { name: '123'}]);
     expect(value.expiresIn).toEqual(expect.any(Number));
+
+    expect(testInterface.internalStorage[`cache-${TAGS_VERSIONS_ALIAS}:tag1`]).toEqual(expect.any(String));
+    expect(testInterface.internalStorage[`cache-${TAGS_VERSIONS_ALIAS}:123`]).toEqual(expect.any(String));
+  });
+
+  it('set creates non-existing tag and preserves existing ones', async () => {
+    const existingTag = { name: 'tag1', version: 1537176259922 };
+    testInterface.internalStorage[`cache-${TAGS_VERSIONS_ALIAS}:${existingTag.name}`] = existingTag.version;
+    const newTag = 'newTag';
+
+    await storage.set('test', '123', { tags: [existingTag.name, newTag] });
+
+    const value = JSON.parse(testInterface.internalStorage['cache-test']);
+
+    expect(value).toMatchObject({
+      key: 'test',
+      permanent: true,
+      value: '"123"'
+    });
+    expect(value.tags).toMatchObject([{ name: existingTag.name}, { name: newTag}]);
+
+    expect(testInterface.internalStorage[`cache-${TAGS_VERSIONS_ALIAS}:${existingTag.name}`]).toEqual(existingTag.version);
+    expect(testInterface.internalStorage[`cache-${TAGS_VERSIONS_ALIAS}:${newTag}`]).toEqual(expect.any(String));
   });
 
   it('set throws if dynamic tags Fn returns non-array value', async () => {
